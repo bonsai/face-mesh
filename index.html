@@ -81,16 +81,16 @@
     renderer.setSize(document.querySelector("#three").clientWidth, document.querySelector("#three").clientHeight);
     document.querySelector("#three").appendChild(renderer.domElement);
 
+    const group = new THREE.Group();
+    scene.add(group);
     const pointMaterial = new THREE.PointsMaterial({ color: 0x7ce0c3, size: 0.012, sizeAttenuation: true });
     const pointsGeometry = new THREE.BufferGeometry();
     const points = new THREE.Points(pointsGeometry, pointMaterial);
-    scene.add(points);
+    group.add(points);
     const wireMaterial = new THREE.LineBasicMaterial({ color: 0x4a9fba, transparent: true, opacity: 0.7 });
     const wireGeometry = new THREE.BufferGeometry();
     const wire = new THREE.LineSegments(wireGeometry, wireMaterial);
-    scene.add(wire);
-    const group = new THREE.Group();
-    scene.add(group);
+    group.add(wire);
 
     // A compact set of landmark connections that makes the point cloud easier to read.
     const edges = [
