@@ -1,0 +1,53 @@
+name: Deploy Face Mesh to GitHub Pages
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download model assets
+        run: |
+          mkdir -p public/models
+          cp index.html tfjs.html README.md public/ 2>/dev/null || true
+          curl -fL --retry 3 \
+            https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task \
+            -o public/models/face_landmarker.task
+          # ONNX conversion of the Face Mesh V2 landmark network. This is a
+          # landmark-head model, not a complete face detector by itself.
+          curl -fL --retry 3 \
+            https://huggingface.co/naklitechie/face-landmarks-onnx/resolve/main/face_landmarks.onnx \
+            -o public/models/face_landmarks.onnx
+          cp -r .github-pages/* public/ 2>/dev/null || true
+          cat > public/models/README.md <<'EOF'
+          # Model assets
+          - face_landmarker.task: official MediaPipe Face Landmarker bundle.
+          - face_landmarks.onnx: ONNX conversion of the Face Mesh V2 landmark network.
+            This ONNX file expects a pre-cropped 256x256 RGB face image and does not
+            include the full face-detection / crop pipeline.
+          EOF
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
