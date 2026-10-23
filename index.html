@@ -1,262 +1,34 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MediaPipe Face Landmarker × Three.js</title>
-  <style>
-    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
-    * { box-sizing: border-box; }
-    body { margin: 0; background: #101318; color: #eef2f7; }
-    header { padding: 16px 20px; border-bottom: 1px solid #303744; }
-    h1 { margin: 0 0 5px; font-size: 1.2rem; }
-    p { margin: 0; color: #aeb8c8; font-size: .92rem; }
-    main { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(280px, 1fr); gap: 14px; padding: 14px; }
-    .panel { min-width: 0; background: #191e27; border: 1px solid #303744; border-radius: 12px; overflow: hidden; }
-    .panel h2 { font-size: .95rem; margin: 0; padding: 11px 14px; border-bottom: 1px solid #303744; }
-    .stage { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #080a0e; overflow: hidden; }
-    video, canvas, #three { position: absolute; inset: 0; width: 100%; height: 100%; }
-    video { object-fit: cover; transform: scaleX(-1); }
-    #overlay { pointer-events: none; }
-    #three canvas { display: block; }
-    .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 14px; }
-    button { border: 0; border-radius: 8px; padding: 9px 13px; background: #7ce0c3; color: #08130f; font-weight: 700; cursor: pointer; }
-    button:disabled { opacity: .45; cursor: not-allowed; }
-    #status { font-size: .88rem; color: #aeb8c8; }
-    .metrics { padding: 0 14px 14px; display: flex; gap: 18px; flex-wrap: wrap; font-size: .9rem; }
-    .metrics strong { color: #7ce0c3; }
-    @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
-  </style>
-</head>
-<body>
-  <header>
-    <h1>MediaPipe Face Landmarker × Three.js</h1>
-    <p>Webcam face landmarks → interactive 3D point cloud. Run on localhost or HTTPS.</p>
-  </header>
-  <main>
-    <section class="panel">
-      <h2>Camera / 2D landmarks</h2>
-      <div class="stage">
-        <video id="video" autoplay playsinline muted></video>
-        <canvas id="overlay"></canvas>
-      </div>
-      <div class="controls">
-        <button id="start">Start camera</button>
-        <button id="stop" disabled>Stop camera</button>
-        <span id="status">Loading model…</span>
-      </div>
-      <div class="metrics"><span>Faces: <strong id="faces">0</strong></span><span>Jaw open: <strong id="jaw">—</strong></span></div>
-    </section>
-    <section class="panel">
-      <h2>Three.js / 3D landmarks</h2>
-      <div class="stage" id="three"></div>
-      <div class="controls"><span id="pose">Move your head after starting the camera.</span></div>
-    </section>
-  </main>
-  <script type="module">
-    import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/vision_bundle.mjs";
-    import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js";
-
-    const video = document.querySelector("#video");
-    const overlay = document.querySelector("#overlay");
-    const ctx = overlay.getContext("2d");
-    const startBtn = document.querySelector("#start");
-    const stopBtn = document.querySelector("#stop");
-    const statusEl = document.querySelector("#status");
-    const facesEl = document.querySelector("#faces");
-    const jawEl = document.querySelector("#jaw");
-    const poseEl = document.querySelector("#pose");
-
-    let landmarker = null;
-    let stream = null;
-    let raf = 0;
-    let lastVideoTime = -1;
-
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x080a0e);
-    const camera = new THREE.PerspectiveCamera(45, 4 / 3, 0.01, 100);
-    camera.position.set(0, 0, 2.6);
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.setSize(document.querySelector("#three").clientWidth, document.querySelector("#three").clientHeight);
-    document.querySelector("#three").appendChild(renderer.domElement);
-
-    const group = new THREE.Group();
-    scene.add(group);
-    const pointMaterial = new THREE.PointsMaterial({ color: 0x7ce0c3, size: 0.012, sizeAttenuation: true });
-    const pointsGeometry = new THREE.BufferGeometry();
-    const points = new THREE.Points(pointsGeometry, pointMaterial);
-    group.add(points);
-    const wireMaterial = new THREE.LineBasicMaterial({ color: 0x4a9fba, transparent: true, opacity: 0.7 });
-    const wireGeometry = new THREE.BufferGeometry();
-    const wire = new THREE.LineSegments(wireGeometry, wireMaterial);
-    group.add(wire);
-
-    // A compact set of landmark connections that makes the point cloud easier to read.
-    const edges = [
-      [10, 338], [338, 297], [297, 332], [332, 284], [284, 251], [251, 389],
-      [389, 356], [356, 454], [454, 323], [323, 361], [361, 288], [288, 397],
-      [397, 365], [365, 379], [379, 378], [378, 400], [400, 377], [377, 152],
-      [152, 148], [148, 176], [176, 149], [149, 150], [150, 136], [136, 172],
-      [172, 58], [58, 132], [132, 93], [93, 234], [234, 127], [127, 162],
-      [162, 21], [21, 54], [54, 103], [103, 67], [67, 109], [109, 10],
-      [1, 168], [168, 6], [6, 197], [197, 195], [195, 5], [5, 4],
-      [33, 133], [133, 159], [159, 145], [145, 153], [153, 154], [154, 155],
-      [263, 362], [362, 386], [386, 374], [374, 380], [380, 381], [381, 382],
-      [61, 146], [146, 91], [91, 181], [181, 84], [84, 17], [17, 314],
-      [314, 405], [405, 321], [321, 375], [375, 291]
-    ];
-
-    async function loadModel() {
-      try {
-        statusEl.textContent = "Loading MediaPipe model…";
-        const vision = await FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm"
-        );
-        landmarker = await FaceLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: new URL("./models/face_landmarker.task", document.baseURI).href,
-            delegate: "GPU"
-          },
-          runningMode: "VIDEO",
-          numFaces: 1,
-          outputFaceBlendshapes: true,
-          outputFacialTransformationMatrixes: true
-        });
-        statusEl.textContent = "Ready. Start the camera.";
-      } catch (error) {
-        console.error(error);
-        statusEl.textContent = "Model failed to load. Check internet / console.";
-      }
-    }
-
-    function resizeOverlay() {
-      const w = video.videoWidth || 640;
-      const h = video.videoHeight || 480;
-      if (overlay.width !== w || overlay.height !== h) {
-        overlay.width = w;
-        overlay.height = h;
-      }
-    }
-
-    function drawLandmarks(landmarks) {
-      ctx.clearRect(0, 0, overlay.width, overlay.height);
-      if (!landmarks) return;
-      ctx.fillStyle = "#7ce0c3";
-      for (let i = 0; i < landmarks.length; i++) {
-        const p = landmarks[i];
-        const x = (1 - p.x) * overlay.width; // mirror to match the video
-        const y = p.y * overlay.height;
-        ctx.beginPath();
-        ctx.arc(x, y, i % 10 === 0 ? 2.1 : 1.15, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
-    function update3D(landmarks) {
-      const coords = new Float32Array(landmarks.length * 3);
-      for (let i = 0; i < landmarks.length; i++) {
-        const p = landmarks[i];
-        coords[i * 3] = (0.5 - p.x) * 1.8;
-        coords[i * 3 + 1] = (0.5 - p.y) * 1.8;
-        coords[i * 3 + 2] = -p.z * 1.2;
-      }
-      pointsGeometry.setAttribute("position", new THREE.BufferAttribute(coords, 3));
-      pointsGeometry.computeBoundingSphere();
-
-      const lineCoords = [];
-      for (const [a, b] of edges) {
-        if (landmarks[a] && landmarks[b]) {
-          for (const idx of [a, b]) {
-            const p = landmarks[idx];
-            lineCoords.push((0.5 - p.x) * 1.8, (0.5 - p.y) * 1.8, -p.z * 1.2);
-          }
-        }
-      }
-      wireGeometry.setAttribute("position", new THREE.Float32BufferAttribute(lineCoords, 3));
-      wireGeometry.computeBoundingSphere();
-
-      // Estimate yaw and pitch from eye and nose landmarks for an intuitive head-following effect.
-      const leftEye = landmarks[33], rightEye = landmarks[263], nose = landmarks[1];
-      if (leftEye && rightEye && nose) {
-        const eyeDx = rightEye.x - leftEye.x;
-        const eyeDy = rightEye.y - leftEye.y;
-        group.rotation.z = -Math.atan2(eyeDy, eyeDx);
-        const eyeMidX = (leftEye.x + rightEye.x) / 2;
-        group.rotation.y = THREE.MathUtils.clamp((nose.x - eyeMidX) * 2.5, -0.65, 0.65);
-        group.rotation.x = THREE.MathUtils.clamp((nose.y - (leftEye.y + rightEye.y) / 2) * 2.2, -0.5, 0.5);
-        poseEl.textContent = `Head pose estimate · yaw ${group.rotation.y.toFixed(2)} · pitch ${group.rotation.x.toFixed(2)}`;
-      }
-    }
-
-    function renderLoop() {
-      raf = requestAnimationFrame(renderLoop);
-      if (video.readyState >= 2 && landmarker && video.currentTime !== lastVideoTime) {
-        lastVideoTime = video.currentTime;
-        resizeOverlay();
-        const result = landmarker.detectForVideo(video, performance.now());
-        const landmarks = result.faceLandmarks?.[0];
-        facesEl.textContent = String(result.faceLandmarks?.length || 0);
-        drawLandmarks(landmarks);
-        if (landmarks) {
-          update3D(landmarks);
-          const categories = result.faceBlendshapes?.[0]?.categories || [];
-          const jaw = categories.find(x => x.categoryName === "jawOpen");
-          jawEl.textContent = jaw ? jaw.score.toFixed(2) : "—";
-        } else {
-          pointsGeometry.setAttribute("position", new THREE.Float32BufferAttribute([], 3));
-          wireGeometry.setAttribute("position", new THREE.Float32BufferAttribute([], 3));
-          jawEl.textContent = "—";
-        }
-      }
-      renderer.render(scene, camera);
-    }
-
-    startBtn.addEventListener("click", async () => {
-      if (!landmarker) {
-        statusEl.textContent = "Model is not ready yet.";
-        return;
-      }
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
-        video.srcObject = stream;
-        await video.play();
-        startBtn.disabled = true;
-        stopBtn.disabled = false;
-        statusEl.textContent = "Camera running.";
-        cancelAnimationFrame(raf);
-        renderLoop();
-      } catch (error) {
-        console.error(error);
-        statusEl.textContent = "Camera unavailable. Allow camera access and use localhost/HTTPS.";
-      }
-    });
-
-    stopBtn.addEventListener("click", () => {
-      cancelAnimationFrame(raf);
-      if (stream) stream.getTracks().forEach(track => track.stop());
-      stream = null;
-      video.srcObject = null;
-      ctx.clearRect(0, 0, overlay.width, overlay.height);
-      pointsGeometry.setAttribute("position", new THREE.Float32BufferAttribute([], 3));
-      wireGeometry.setAttribute("position", new THREE.Float32BufferAttribute([], 3));
-      facesEl.textContent = "0";
-      jawEl.textContent = "—";
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
-      statusEl.textContent = "Camera stopped.";
-      renderer.render(scene, camera);
-    });
-
-    window.addEventListener("resize", () => {
-      const host = document.querySelector("#three");
-      camera.aspect = host.clientWidth / host.clientHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(host.clientWidth, host.clientHeight);
-    });
-
-    await loadModel();
-    renderer.render(scene, camera);
-  </script>
-</body>
-</html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Face Mesh Lab</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif}*{box-sizing:border-box}body{margin:0;background:#101318;color:#eef2f7}header{padding:16px 20px;border-bottom:1px solid #303744}h1{font-size:1.25rem;margin:0 0 6px}p{margin:0;color:#aeb8c8;font-size:.92rem}main{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;padding:14px}.panel{min-width:0;background:#191e27;border:1px solid #303744;border-radius:12px;overflow:hidden}.panel h2{font-size:.95rem;margin:0;padding:11px 14px;border-bottom:1px solid #303744}.stage{position:relative;width:100%;aspect-ratio:4/3;background:#080a0e;overflow:hidden}video,canvas,#three{position:absolute;inset:0;width:100%;height:100%}video{object-fit:cover;transform:scaleX(-1)}canvas{pointer-events:none}.controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px 14px}button{border:0;border-radius:8px;padding:9px 13px;background:#7ce0c3;color:#08130f;font-weight:700;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}#status,#pose{font-size:.88rem;color:#aeb8c8}.metrics{padding:0 14px 14px;display:flex;gap:18px;flex-wrap:wrap;font-size:.9rem}.metrics strong{color:#7ce0c3}footer{padding:0 16px 18px;color:#aeb8c8;font-size:.82rem}@media(max-width:760px){main{grid-template-columns:1fr}}
+</style></head><body>
+<header><h1>Face Mesh Lab</h1><p>MediaPipe Face + Hand Landmarks · Three.js 3D point cloud · ブラウザー内で処理</p></header>
+<main><section class="panel"><h2>Camera · 2D landmarks</h2><div class="stage"><video id="video" autoplay playsinline muted></video><canvas id="overlay"></canvas></div><div class="controls"><button id="start">カメラ開始</button><button id="stop" disabled>停止</button><span id="status">モデルを読み込み中…</span></div><div class="metrics"><span>顔: <strong id="faces">0</strong></span><span>手: <strong id="hands">0</strong></span><span>口の開き: <strong id="jaw">—</strong></span></div></section>
+<section class="panel"><h2>Three.js · 3D face landmarks</h2><div class="stage" id="three"></div><div class="controls"><span id="pose">カメラを開始して顔を動かしてください。</span></div></section></main>
+<footer>カメラへのアクセスには HTTPS または localhost が必要です。映像はこのページ内で処理し、サーバーには送信しません。</footer>
+<script type="module">
+import {FaceLandmarker,HandLandmarker,FilesetResolver} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/vision_bundle.mjs";
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js";
+const $=s=>document.querySelector(s),video=$("#video"),canvas=$("#overlay"),ctx=canvas.getContext("2d"),status=$("#status"),start=$("#start"),stop=$("#stop");
+let faceModel=null,handModel=null,stream=null,raf=0,lastTime=-1;
+const handEdges=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x080a0e);const camera=new THREE.PerspectiveCamera(45,4/3,.01,100);camera.position.set(0,0,2.6);
+const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));$("#three").appendChild(renderer.domElement);
+const group=new THREE.Group();scene.add(group);const pointsGeometry=new THREE.BufferGeometry(),points=new THREE.Points(pointsGeometry,new THREE.PointsMaterial({color:0x7ce0c3,size:.012,sizeAttenuation:true}));group.add(points);
+const wireGeometry=new THREE.BufferGeometry(),wire=new THREE.LineSegments(wireGeometry,new THREE.LineBasicMaterial({color:0x4a9fba,transparent:true,opacity:.7}));group.add(wire);
+function resize3d(){const host=$("#three");camera.aspect=host.clientWidth/Math.max(1,host.clientHeight);camera.updateProjectionMatrix();renderer.setSize(host.clientWidth,host.clientHeight)}window.addEventListener("resize",resize3d);
+async function loadModels(){try{const vision=await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm");faceModel=await FaceLandmarker.createFromOptions(vision,{baseOptions:{modelAssetPath:new URL("./models/face_landmarker.task",document.baseURI).href,delegate:"GPU"},runningMode:"VIDEO",numFaces:1,outputFaceBlendshapes:true});handModel=await HandLandmarker.createFromOptions(vision,{baseOptions:{modelAssetPath:new URL("./models/hand_landmarker.task",document.baseURI).href,delegate:"GPU"},runningMode:"VIDEO",numHands:2});status.textContent="準備完了。カメラを開始してください。"}catch(e){console.error(e);status.textContent="モデル読み込み失敗。GitHub Pages の Actions と Console を確認してください。"}}
+function drawPoints(ps,color,r=1.3){ctx.fillStyle=color;for(const p of ps){ctx.beginPath();ctx.arc((1-p.x)*canvas.width,p.y*canvas.height,r,0,Math.PI*2);ctx.fill()}}
+function drawConnections(ps,edges,color,width=1){ctx.strokeStyle=color;ctx.lineWidth=width;for(const [a,b] of edges){const p=ps[a],q=ps[b];if(!p||!q)continue;ctx.beginPath();ctx.moveTo((1-p.x)*canvas.width,p.y*canvas.height);ctx.lineTo((1-q.x)*canvas.width,q.y*canvas.height);ctx.stroke()}}
+function update3d(ps){const coords=new Float32Array(ps.length*3);for(let i=0;i<ps.length;i++){const p=ps[i];coords.set([(.5-p.x)*1.8,(.5-p.y)*1.8,-p.z*1.2],i*3)}pointsGeometry.setAttribute("position",new THREE.BufferAttribute(coords,3));pointsGeometry.computeBoundingSphere();
+const edges=FaceLandmarker.FACE_LANDMARKS_CONTOURS||[],lines=[];for(const e of edges){const a=ps[e.start],b=ps[e.end];if(a&&b)for(const p of [a,b])lines.push((.5-p.x)*1.8,(.5-p.y)*1.8,-p.z*1.2)}wireGeometry.setAttribute("position",new THREE.Float32BufferAttribute(lines,3));wireGeometry.computeBoundingSphere();
+const a=ps[33],b=ps[263],nose=ps[1];if(a&&b&&nose){group.rotation.z=-Math.atan2(b.y-a.y,b.x-a.x);group.rotation.y=THREE.MathUtils.clamp((nose.x-(a.x+b.x)/2)*2.5,-.65,.65);group.rotation.x=THREE.MathUtils.clamp((nose.y-(a.y+b.y)/2)*2.2,-.5,.5);$("#pose").textContent="頭部推定 · yaw "+group.rotation.y.toFixed(2)+" · pitch "+group.rotation.x.toFixed(2)}}
+function render(){raf=requestAnimationFrame(render);if(video.readyState<2||!faceModel||!handModel||video.currentTime===lastTime){renderer.render(scene,camera);return}lastTime=video.currentTime;const w=video.videoWidth,h=video.videoHeight;if(!w||!h)return;if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h}ctx.clearRect(0,0,w,h);
+const now=performance.now(),fr=faceModel.detectForVideo(video,now),hr=handModel.detectForVideo(video,now),face=fr.faceLandmarks?.[0];$("#faces").textContent=String(fr.faceLandmarks?.length||0);$("#hands").textContent=String(hr.handLandmarks?.length||0);
+if(face){drawPoints(face,"#7ce0c3",1.15);update3d(face);const jaw=fr.faceBlendshapes?.[0]?.categories?.find(x=>x.categoryName==="jawOpen");$("#jaw").textContent=jaw?jaw.score.toFixed(2):"—"}else{pointsGeometry.setAttribute("position",new THREE.Float32BufferAttribute([],3));wireGeometry.setAttribute("position",new THREE.Float32BufferAttribute([],3));$("#jaw").textContent="—"}
+for(const hand of hr.handLandmarks||[]){drawConnections(hand,handEdges,"#00dfff",2);drawPoints(hand,"#00dfff",2)}renderer.render(scene,camera)}
+start.onclick=async()=>{if(!faceModel||!handModel){status.textContent="モデルの読み込みを待ってください。";return}try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user"},audio:false});video.srcObject=stream;await video.play();start.disabled=true;stop.disabled=false;status.textContent="カメラ動作中";cancelAnimationFrame(raf);render()}catch(e){console.error(e);status.textContent="カメラを利用できません。HTTPS/localhost と権限を確認してください。"}};
+stop.onclick=()=>{cancelAnimationFrame(raf);if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;video.srcObject=null;ctx.clearRect(0,0,canvas.width,canvas.height);pointsGeometry.setAttribute("position",new THREE.Float32BufferAttribute([],3));wireGeometry.setAttribute("position",new THREE.Float32BufferAttribute([],3));$("#faces").textContent="0";$("#hands").textContent="0";$("#jaw").textContent="—";start.disabled=false;stop.disabled=true;status.textContent="カメラ停止中";renderer.render(scene,camera)};
+resize3d();await loadModels();renderer.render(scene,camera);
+</script></body></html>
