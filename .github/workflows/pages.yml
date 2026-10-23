@@ -22,22 +22,18 @@ jobs:
       - name: Download model assets
         run: |
           mkdir -p public/models
-          cp index.html tfjs.html onnx.html README.md public/
+          cp index.html README.md public/
           curl -fL --retry 3 \
             https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task \
             -o public/models/face_landmarker.task
-          # ONNX conversion of the Face Mesh V2 landmark network. This is a
-          # landmark-head model, not a complete face detector by itself.
           curl -fL --retry 3 \
-            https://huggingface.co/naklitechie/face-landmarks-onnx/resolve/main/face_landmarks.onnx \
-            -o public/models/face_landmarks.onnx
+            https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task \
+            -o public/models/hand_landmarker.task
           cp -r .github-pages/* public/ 2>/dev/null || true
           cat > public/models/README.md <<'EOF'
           # Model assets
           - face_landmarker.task: official MediaPipe Face Landmarker bundle.
-          - face_landmarks.onnx: ONNX conversion of the Face Mesh V2 landmark network.
-            This ONNX file expects a pre-cropped 256x256 RGB face image and does not
-            include the full face-detection / crop pipeline.
+          - hand_landmarker.task: official MediaPipe Hand Landmarker bundle.
           EOF
       - uses: actions/upload-pages-artifact@v3
         with:
