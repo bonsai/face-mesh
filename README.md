@@ -1,36 +1,29 @@
-# Face Mesh: MediaPipe, TensorFlow.js, ONNX Runtime Web
+# Face Mesh Lab
 
-Browser-based face landmark demos deployed with GitHub Pages.
+A single-page browser demo combining MediaPipe face landmarks, hand landmarks, and a Three.js 3D face point cloud.
 
-## Demos
+## Demo
 
-- **MediaPipe Face Landmarker + Three.js:** [Open demo](https://bonsai.github.io/face-mesh/)
-- **TensorFlow.js Face Mesh:** [Open demo](https://bonsai.github.io/face-mesh/tfjs.html)
-- **ONNX Runtime Web (experimental):** [Open demo](https://bonsai.github.io/face-mesh/onnx.html)
+- **GitHub Pages:** https://bonsai.github.io/face-mesh/
+- Face landmarks are drawn over the mirrored camera preview.
+- Hand landmarks and finger connections are drawn in cyan.
+- Face landmarks are shown as a 3D point cloud with a simple head-pose estimate and jaw-open score.
 
-## Model assets
+## Architecture
 
-The GitHub Actions Pages workflow downloads model assets during deployment, so large binary weights do not need to be committed to Git:
+The public demo is consolidated into one page: `index.html`. GitHub Actions downloads the two MediaPipe model assets during deployment, so model binaries are not committed to the repository.
 
-- `models/face_landmarker.task` — official MediaPipe Face Landmarker bundle.
-- `models/face_landmarks.onnx` — ONNX conversion of the Face Mesh V2 landmark network from Hugging Face.
+- `models/face_landmarker.task` — MediaPipe Face Landmarker.
+- `models/hand_landmarker.task` — MediaPipe Hand Landmarker.
 
-The ONNX file is only the landmark network. It expects a 256×256 RGB face crop and does not include the face detector/crop pipeline. The current ONNX page is an experimental center-crop smoke test; it is not equivalent in robustness to the full MediaPipe pipeline.
-
-TensorFlow.js uses the published `@tensorflow-models/face-landmarks-detection` package with its TFJS runtime and downloads its model assets at runtime.
-
-## Local run
-
-For the MediaPipe and Three.js demo, download the official `face_landmarker.task` into `models/face_landmarker.task`, then serve the repository root:
+## Run locally
 
 ```bash
 python -m http.server 8000
 ```
 
-Open <http://localhost:8000/>. Camera access requires localhost or HTTPS.
-
-The TFJS and ONNX pages also need internet access to load their JavaScript runtimes; the ONNX page additionally needs `models/face_landmarks.onnx`.
+Open <http://localhost:8000/> and allow camera access. Camera access requires localhost or HTTPS.
 
 ## Privacy and limitations
 
-Camera frames are processed in the browser by these demos; they are not intentionally uploaded to a server. This is a prototype for comparing runtimes, not a calibrated 3D face reconstruction. Check each model's license and model card before redistribution or commercial use.
+Camera frames are processed in the browser; this demo does not intentionally upload them. The 3D view visualizes landmark coordinates and is not a calibrated 3D face reconstruction. JavaScript and model files load from CDNs / Google Cloud Storage.
