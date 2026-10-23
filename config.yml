@@ -1,0 +1,19 @@
+project:
+  name: mediapipe-face-hand
+  version: 1.0.0
+  description: MediaPipe Face Mesh + Hand Landmark Demo
+
+models:
+  face_landmarker:
+    path: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+    running_mode: VIDEO
+    num_faces: 1
+  hand_landmarker:
+    path: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+    running_mode: VIDEO
+    num_hands: 2
+
+build:
+  target: assets/
+  assets: ["face_landmarker.task", "hand_landmarker.task"]
+  command: "make download"
