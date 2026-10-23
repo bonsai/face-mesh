@@ -22,7 +22,7 @@ jobs:
       - name: Download model assets
         run: |
           mkdir -p public/models
-          cp index.html tfjs.html README.md public/ 2>/dev/null || true
+          cp index.html tfjs.html onnx.html README.md public/
           curl -fL --retry 3 \
             https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task \
             -o public/models/face_landmarker.task
